@@ -1,0 +1,13 @@
+.venv/
+__pycache__/
+*.pyc
+
+.matplotlib-cache/
+build/
+dist/
+
+users.json
+fatigue_data.csv
+
+*.log
+*.tmp
