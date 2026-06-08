@@ -292,9 +292,14 @@ class ModernFatigueApp(ctk.CTk):
         panel.grid(row=2, column=0, sticky="nsew", pady=(0, 14))
         panel.grid_columnconfigure(0, weight=1)
         panel.grid_rowconfigure(1, weight=1)
-        self._label(panel, "趋势图", size=19, weight="bold").grid(row=0, column=0, sticky="w", padx=20, pady=(18, 10))
+        header = ctk.CTkFrame(panel, fg_color=CARD)
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 10))
+        header.grid_columnconfigure(0, weight=1)
+        self._label(header, "趋势图", size=19, weight="bold").grid(row=0, column=0, sticky="w")
+        self._button(header, "查看详情", command=self._show_chart_detail, width=92).grid(row=0, column=1, padx=(8, 0))
         self.chart_frame = self._soft_card(panel)
         self.chart_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 18))
+        self.chart_frame.bind("<Button-1>", lambda _event: self._show_chart_detail())
         self._refresh_chart()
 
     def _build_history_card(self, parent):
@@ -307,11 +312,13 @@ class ModernFatigueApp(ctk.CTk):
         header.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 10))
         header.grid_columnconfigure(0, weight=1)
         self._label(header, "历史记录", size=19, weight="bold").grid(row=0, column=0, sticky="w")
-        self._button(header, "删除选中", command=self._delete_selected_records, width=100).grid(row=0, column=1, padx=(8, 0))
-        self._button(header, "清空当前用户", command=self._clear_current_user_records, width=120).grid(row=0, column=2, padx=(8, 0))
+        self._button(header, "查看详情", command=self._show_history_detail, width=92).grid(row=0, column=1, padx=(8, 0))
+        self._button(header, "删除选中", command=self._delete_selected_records, width=100).grid(row=0, column=2, padx=(8, 0))
+        self._button(header, "清空当前用户", command=self._clear_current_user_records, width=120).grid(row=0, column=3, padx=(8, 0))
 
         self.history_frame = ctk.CTkScrollableFrame(panel, fg_color=CARD_SOFT, corner_radius=14)
         self.history_frame.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 18))
+        self.history_frame.bind("<Button-1>", lambda _event: self._show_history_detail())
         self._refresh_history()
 
     def _profile_entry(self, parent, row, label, key, placeholder, help_key=None):
@@ -547,13 +554,18 @@ class ModernFatigueApp(ctk.CTk):
             self.record_checks[record["record_id"]] = selected
             item = ctk.CTkFrame(self.history_frame, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDER)
             item.pack(fill=tk.X, pady=(0, 8), padx=2)
+            item.bind("<Button-1>", lambda _event: self._show_history_detail())
             ctk.CTkCheckBox(item, text="", variable=selected, width=24, checkbox_width=18, checkbox_height=18).grid(row=0, column=0, rowspan=2, padx=(12, 4), pady=12)
-            self._label(item, f"{record['date']}    疲劳值 {record['fatigue']}    {record['status']}", size=13, weight="bold").grid(row=0, column=1, sticky="w", pady=(10, 0))
+            title_label = self._label(item, f"{record['date']}    疲劳值 {record['fatigue']}    {record['status']}", size=13, weight="bold")
+            title_label.grid(row=0, column=1, sticky="w", pady=(10, 0))
+            title_label.bind("<Button-1>", lambda _event: self._show_history_detail())
             detail = (
                 f"睡眠 {record['sleep_hours']:g}h/{record['sleep_quality']} | 工作 {record['work_hours']:g}h | "
                 f"屏幕 {record['screen_hours']:g}h | 饮水 {record['water_ml']}ml | 运动量 {record['exercise_load']:g} | 心情 {record['mood_score']}"
             )
-            self._label(item, detail, size=12, color=MUTED).grid(row=1, column=1, sticky="w", pady=(2, 10))
+            detail_label = self._label(item, detail, size=12, color=MUTED)
+            detail_label.grid(row=1, column=1, sticky="w", pady=(2, 10))
+            detail_label.bind("<Button-1>", lambda _event: self._show_history_detail())
 
     def _delete_selected_records(self):
         selected_ids = [record_id for record_id, var in self.record_checks.items() if var.get()]
@@ -597,28 +609,119 @@ class ModernFatigueApp(ctk.CTk):
             self._label(self.chart_frame, "未安装 matplotlib，无法显示趋势图。", size=13, color=MUTED).pack(anchor=tk.CENTER, expand=True)
             return
 
-        recent = records[-14:]
-        dates = [record["date"][5:10] for record in recent]
-        fatigue_values = [float(record["fatigue"]) for record in recent]
-        figure = Figure(figsize=(6.6, 2.3), dpi=100, facecolor=CARD_SOFT)
+        self.chart_canvas = self._render_chart(self.chart_frame, records, recent_limit=14, figsize=(6.6, 2.3), labelsize=8)
+        if self.chart_canvas:
+            self.chart_canvas.get_tk_widget().bind("<Button-1>", lambda _event: self._show_chart_detail())
+
+    def _render_chart(self, parent, records, recent_limit=None, figsize=(9.8, 4.8), labelsize=10, rotate=35):
+        try:
+            from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+            from matplotlib.figure import Figure
+        except ImportError:
+            self._label(parent, "未安装 matplotlib，无法显示趋势图。", size=13, color=MUTED).pack(anchor=tk.CENTER, expand=True)
+            return None
+
+        shown_records = records[-recent_limit:] if recent_limit else records
+        dates = [record["date"][5:10] for record in shown_records]
+        fatigue_values = [float(record["fatigue"]) for record in shown_records]
+        figure = Figure(figsize=figsize, dpi=100, facecolor=CARD_SOFT)
         axis = figure.add_subplot(111)
         axis.set_facecolor(CARD_SOFT)
-        axis.plot(dates, fatigue_values, marker="o", color=PRIMARY, linewidth=2.2)
+        axis.plot(dates, fatigue_values, marker="o", color=PRIMARY, linewidth=2.3)
         axis.fill_between(dates, fatigue_values, color="#bfdbfe", alpha=0.35)
         axis.set_ylim(0, 100)
         axis.set_ylabel("疲劳值", color=MUTED)
         axis.grid(True, linestyle="--", alpha=0.28)
-        axis.tick_params(axis="x", labelsize=8, colors=MUTED)
-        axis.tick_params(axis="y", labelsize=8, colors=MUTED)
+        axis.tick_params(axis="x", labelsize=labelsize, colors=MUTED, rotation=rotate)
+        axis.tick_params(axis="y", labelsize=labelsize, colors=MUTED)
         axis.spines["top"].set_visible(False)
         axis.spines["right"].set_visible(False)
         axis.spines["left"].set_color(BORDER)
         axis.spines["bottom"].set_color(BORDER)
         figure.tight_layout()
 
-        self.chart_canvas = FigureCanvasTkAgg(figure, master=self.chart_frame)
-        self.chart_canvas.draw()
-        self.chart_canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=10, pady=10)
+        canvas = FigureCanvasTkAgg(figure, master=parent)
+        canvas.draw()
+        canvas.get_tk_widget().pack(fill=tk.BOTH, expand=True, padx=12, pady=12)
+        return canvas
+
+    def _show_chart_detail(self):
+        if not self.current_user:
+            return
+
+        records = DataManager.load_records(self.current_user["user_id"])
+        window = ctk.CTkToplevel(self)
+        window.title("趋势图详情")
+        window.geometry("1040x680")
+        window.minsize(860, 560)
+        window.transient(self)
+        window.configure(fg_color=BG)
+
+        panel = self._card(window)
+        panel.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(panel, fg_color=CARD)
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 12))
+        header.grid_columnconfigure(0, weight=1)
+        self._label(header, "疲劳趋势详情", size=22, weight="bold").grid(row=0, column=0, sticky="w")
+        self._label(header, f"当前用户：{self.current_user['name']}｜共 {len(records)} 条记录", size=13, color=MUTED).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self._button(header, "关闭", command=window.destroy, primary=True, width=86).grid(row=0, column=1, rowspan=2, sticky="e")
+
+        chart_panel = self._soft_card(panel)
+        chart_panel.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        if not records:
+            self._label(chart_panel, "暂无趋势数据，保存记录后会显示折线图。", size=14, color=MUTED).pack(anchor=tk.CENTER, expand=True)
+            return
+        self._render_chart(chart_panel, records, figsize=(9.8, 4.8), labelsize=10, rotate=35)
+
+    def _show_history_detail(self):
+        if not self.current_user:
+            return
+
+        records = DataManager.load_records(self.current_user["user_id"])
+        window = ctk.CTkToplevel(self)
+        window.title("历史记录详情")
+        window.geometry("1080x720")
+        window.minsize(920, 580)
+        window.transient(self)
+        window.configure(fg_color=BG)
+
+        panel = self._card(window)
+        panel.pack(fill=tk.BOTH, expand=True, padx=18, pady=18)
+        panel.grid_columnconfigure(0, weight=1)
+        panel.grid_rowconfigure(1, weight=1)
+
+        header = ctk.CTkFrame(panel, fg_color=CARD)
+        header.grid(row=0, column=0, sticky="ew", padx=20, pady=(18, 12))
+        header.grid_columnconfigure(0, weight=1)
+        self._label(header, "历史记录详情", size=22, weight="bold").grid(row=0, column=0, sticky="w")
+        self._label(header, f"当前用户：{self.current_user['name']}｜共 {len(records)} 条记录", size=13, color=MUTED).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self._button(header, "关闭", command=window.destroy, primary=True, width=86).grid(row=0, column=1, rowspan=2, sticky="e")
+
+        content = ctk.CTkScrollableFrame(panel, fg_color=CARD_SOFT, corner_radius=14)
+        content.grid(row=1, column=0, sticky="nsew", padx=20, pady=(0, 20))
+        content.grid_columnconfigure(0, weight=1)
+        if not records:
+            self._label(content, "暂无历史记录，保存今日记录后会显示在这里。", size=14, color=MUTED).pack(anchor=tk.CENTER, pady=28)
+            return
+
+        for record in reversed(records):
+            item = ctk.CTkFrame(content, fg_color=CARD, corner_radius=12, border_width=1, border_color=BORDER)
+            item.pack(fill=tk.X, pady=(0, 10), padx=4)
+            item.grid_columnconfigure(1, weight=1)
+            color = self._get_status_color(float(record["fatigue"]))
+            self._label(item, record["date"], size=13, weight="bold").grid(row=0, column=0, sticky="w", padx=14, pady=(12, 0))
+            self._label(item, f"疲劳值 {record['fatigue']:g}｜{record['status']}", size=15, weight="bold", color=color).grid(row=0, column=1, sticky="e", padx=14, pady=(12, 0))
+            detail = (
+                f"睡眠 {record['sleep_hours']:g}h（{record['sleep_quality']}）  "
+                f"工作/学习 {record['work_hours']:g}h  屏幕 {record['screen_hours']:g}h  "
+                f"饮水 {record['water_ml']}ml  运动 {record['exercise_minutes']}分钟/{record['exercise_intensity']}  "
+                f"运动量 {record['exercise_load']:g}  心情 {record['mood_score']}  "
+                f"身体 {record['body_status']}  特殊状态 {record['special_status']}"
+            )
+            self._label(item, detail, size=12, color=MUTED, wraplength=960, justify=tk.LEFT).grid(row=1, column=0, columnspan=2, sticky="w", padx=14, pady=(6, 12))
 
     def _save_new_user(self):
         try:
